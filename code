@@ -1,0 +1,191 @@
+# 載入所需的 R 套件
+library(dplyr)
+# 讀取資料
+data = read.csv("C:/Users/ASUS/OneDrive/桌面/變異數分析/cleaned_AQI_station_info.csv", header = T)
+
+#函數############################################################################
+# 定義一個函數來計算隨機樣本的平均值和標準差
+calculate_stats <- function(df) {
+  set.seed(123) # 確保抽樣的一致性
+  if (nrow(df) < 60) {
+    sample_df <- df
+  } else {
+    sample_df <- df[sample(nrow(df), size = 60), ]
+  }
+  mean_aqi <- round(mean(sample_df$aqi), 2)
+  std_aqi <- round(sd(sample_df$aqi), 3)
+  return(c(mean = mean_aqi, std = std_aqi))
+}
+
+calculate_stats_and_sample <- function(df) {
+  set.seed(123) # 確保抽樣的一致性
+  if (nrow(df) < 60) {
+    sample_df <- df
+  } else {
+    sample_df <- df[sample(nrow(df), size = 60), ]
+  }
+  mean_aqi <- round(mean(sample_df$aqi), 2)
+  std_aqi <- round(sd(sample_df$aqi), 3)
+  return(data.frame(mean = mean_aqi, std = std_aqi, sample_df))
+}
+#抽樣############################################################################
+# 使用先前確定的分層變量進行分層
+strata <- data %>%
+  group_by(月份, 人口密度分類, 工業區3km內, 距火力發電廠30km內)
+
+# 從每個分層中抽取固定數量的樣本
+set.seed(123) # 確保結果可以重現
+sampled_data_list <- strata %>%
+  do(calculate_stats_and_sample(.))
+
+# 獲取所有抽取的樣本
+all_samples <- sampled_data_list[, c(-1:-2)]
+all_samples$距火力發電廠30km內 = as.character(as.factor(all_samples$距火力發電廠30km內))
+all_samples$工業區3km內 = as.character(as.factor(all_samples$工業區3km內))
+# 使用 for 迴圈和 subset 函數進行分層
+results <- data.frame() # 創建一個空的數據框來儲存結果
+for (month in unique(data$月份)) {
+  for (population in unique(data$人口密度分類)) {
+    for (powerplant in 0:1) {
+      for (industrial in 0:1) {
+        # 分層樣本
+        subset_data <- subset(data, 月份 == month & 人口密度分類 == population & 距火力發電廠30km內 == powerplant & 工業區3km內 == industrial)
+        
+        # 計算統計數據
+        stats <- calculate_stats(subset_data)
+        
+        # 儲存結果
+        results <- rbind(results, c(month, population, powerplant, industrial, nrow(subset_data), stats))
+      }
+    }
+  }
+}
+
+# 給結果數據框添加列名
+colnames(results) <- c('Month', 'PopulationDensity', 'Powerplant', 'Industrialzone', 'Sample', 'SampleMean', 'SampleStd')
+# 查看結果
+print(results)
+# 匯出結果為 CSV 檔案
+write.csv(results, 'C:/Users/ASUS/OneDrive/桌面/變異數分析/sample_stats_aqi.csv', row.names = FALSE)
+# 使用先前確定的分層變量進行分層
+strata <- data %>% 
+  group_by(名稱, 月份, 人口密度分類, 工業區3km內, 距火力發電廠30km內)
+
+# 從每個分層中抽取固定數量的樣本
+set.seed(123) # 確保結果可以重現
+sampled_data <- strata %>%
+  do(sample_n(., size = min(60, n()), replace = FALSE)) %>%
+  ungroup()
+
+# 確保 sampled_data 包含所有需要的變量
+sampled_data <- sampled_data %>% 
+  ungroup() %>% 
+  select(aqi, 名稱, 月份, 人口密度分類, 工業區3km內, 距火力發電廠30km內)
+
+#EDAs############################################################################
+install.packages("ggplot2")
+library(ggplot2)
+# 圖1
+p1 <- ggplot(sampled_data, aes(x = 人口密度分類, y = aqi)) +
+  geom_boxplot() +
+  labs(title = "AQI vs 人口密度分類", x = "人口密度分類", y = "AQI")
+# 圖2
+p2 <- ggplot(sampled_data, aes(x = 工業區3km內, y = aqi, group = 工業區3km內)) +
+  geom_boxplot() +
+  labs(title = "AQI vs 工業區3km內", x = "工業區3km內", y = "AQI")
+# 圖3
+p3 <- ggplot(sampled_data, aes(x = 距火力發電廠30km內, y = aqi, group = 距火力發電廠30km內)) +
+  geom_boxplot() +
+  labs(title = "AQI vs 距火力發電廠30km內", x = "距火力發電廠30km內", y = "AQI")
+# 圖4
+p4 <- ggplot(all_samples, aes(x = 人口密度分類, y = aqi, group = 工業區3km內, col = 工業區3km內)) + 
+  geom_point() + stat_summary(fun = mean, geom = "line") + theme_bw()
+# 圖5
+p5 <- ggplot(all_samples, aes(x = 人口密度分類, y = aqi, group = 距火力發電廠30km內, col = 距火力發電廠30km內)) + 
+  geom_point() + stat_summary(fun = mean, geom = "line") + theme_bw()
+# 圖6
+p6 <- ggplot(all_samples, aes(x = 月份, y = aqi), xlab = c(1,2,3,4,5,6,7,8,9,10,11,12)) + 
+  geom_point() + stat_summary(fun = mean, geom = "line") + theme_bw()
+#圖7
+# 确保日期是正确的日期格式
+all_samples$日期 <- as.Date(all_samples$日期)
+# 创建一个新列，表示年月
+all_samples$年月 <- format(all_samples$日期, "%Y-%m")
+# 使用 ggplot2 画图
+p7 <- ggplot(all_samples, aes(x = 年月, y = aqi)) +
+  geom_point(stat = "summary", fun = mean) +  # 添加点图，点为每月的平均值
+  stat_summary(fun = mean, geom = "line", aes(group = 1), color = "blue") +  # 添加表示平均值的线
+  theme_bw() +  # 使用黑白主题
+  labs(title = "每月AQI趨勢", x = "日期", y = "AQI") +  # 添加标题和轴标签
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))  # 将X轴标签旋转90度以防重叠
+# 將圖存儲到指定目錄
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/EDA/plot1.png", plot = p1)
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/EDA/plot2.png", plot = p2)
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/EDA/plot3.png", plot = p3)
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/EDA/plot4.png", plot = p4)
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/EDA/plot5.png", plot = p5)
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/EDA/plot6.png", plot = p6)
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/EDA/plot7.png", plot = p7)
+
+#################################################################################
+#檢查相關性
+install.packages("vcd")
+library(vcd)
+contingency_table <- table(all_samples$人口密度分類, all_samples$工業區3km內)
+cramer_v_result <- assocstats(contingency_table)
+cramer_v_result
+contingency_table <- table(all_samples$工業區3km內, all_samples$距火力發電廠30km內)
+cramer_v_result <- assocstats(contingency_table)
+cramer_v_result
+contingency_table <- table(all_samples$人口密度分類, all_samples$距火力發電廠30km內)
+cramer_v_result <- assocstats(contingency_table)
+cramer_v_result
+#檢查多重共線性
+install.packages("car")
+library(car)
+# 建立一個只包含固定效應的線性模型
+model_lin <- lm(aqi ~ 人口密度分類 + 工業區3km內 + 距火力發電廠30km內 +
+                  人口密度分類:工業區3km內 + 工業區3km內:距火力發電廠30km內 +
+                  人口密度分類:工業區3km內:距火力發電廠30km內, data = all_samples)
+# 計算 VIF
+vif_values <- vif(model_lin, type = 'predictor')
+print(vif_values)
+
+#建模############################################################################
+library(lme4)
+# month作為隨機效應，其他三個因子作為固定效應
+model1 <- aov(log10(aqi) ~ 人口密度分類, data = all_samples)
+summary(model1)
+anova(model1)
+model2 <- lmer(log10(aqi) ~ 工業區3km內 + (1|月份), data = all_samples)
+summary(model2)
+anova(model2)
+model3 <- aov(log10(aqi) ~ 距火力發電廠30km內, data = all_samples)
+summary(model3)
+anova(model3)
+model4 <- lmer(log10(aqi) ~ 人口密度分類  + 工業區3km內 + 距火力發電廠30km內 + (1|月份), data = all_samples)
+summary(model4)
+anova(model4)
+modelall <- lmer(log10(aqi) ~ 人口密度分類  + 工業區3km內 + 距火力發電廠30km內 + (1|月份) +
+                 人口密度分類:工業區3km內 + 工業區3km內:距火力發電廠30km內 + 人口密度分類:距火力發電廠30km內
+               , data = all_samples)
+summary(modelall)
+anova(modelall)
+
+#生成qq plot
+p8 = qqnorm(resid(model2), main = "Residuals")
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/Residuals.png", plot = p8)
+
+p9 = qqline(resid(model2))
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/Residuals2.png", plot = p9)
+
+#取對數
+modellog <- lmer(log10(aqi) ~ 人口密度分類  + 工業區3km內 + 距火力發電廠30km內 + (1|月份) +
+                 人口密度分類:工業區3km內 + 工業區3km內:距火力發電廠30km內 + 人口密度分類:距火力發電廠30km內
+               , data = all_samples)
+summary(modellog)
+p8 = qqnorm(resid(modellog ), main = "Residuals")
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/Residuals.png", plot = p8)
+
+p9 = qqline(resid(modellog))
+ggsave("C:/Users/ASUS/OneDrive/桌面/變異數分析/Residuals2.png", plot = p9)
